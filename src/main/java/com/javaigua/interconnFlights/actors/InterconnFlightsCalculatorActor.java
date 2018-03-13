@@ -34,7 +34,7 @@ public class InterconnFlightsCalculatorActor extends AbstractActor {
   @Override
   public Receive createReceive() {
     return receiveBuilder()
-      .match(CalculateInterconnFlights.class,
+      .match(CalculateInterconnFlights.class,  // handle CalculateInterconnFlights msgs
         calculateInterconnFlights -> {
           ActorRef actorRef = calculateInterconnFlights.getOriginalSender();
           actorRef.tell(calculateInterconnectingFlights(calculateInterconnFlights), getSelf());

@@ -17,8 +17,10 @@ import akka.http.javadsl.model.HttpRequest;
 import akka.http.javadsl.marshallers.jackson.Jackson;
 import akka.stream.ActorMaterializer;
 import akka.stream.Materializer;
-
 import static akka.pattern.PatternsCS.pipe;
+
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 
 import com.javaigua.interconnFlights.domain.*;
 import com.javaigua.interconnFlights.actors.messages.*;
@@ -32,9 +34,6 @@ import com.javaigua.interconnFlights.actors.messages.*;
 public class RoutesAndSchedulesFetcherActor extends AbstractActor {
 
   LoggingAdapter log = Logging.getLogger(getContext().getSystem(), this);
-
-  final static String ROUTES_URL = "https://api.ryanair.com/core/3/routes";
-  final static String SCHEDULE_URL = "https://api.ryanair.com/timetable/3/schedules/%s/%s/years/%s/months/%s";
 
   final Http http = Http.get(context().system());
   final ExecutionContext ec = getContext().dispatcher();
@@ -53,7 +52,7 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
   @Override
   public Receive createReceive() {
     return receiveBuilder()
-      .match(FetchRoutesAndSchedule.class, // handle GetInterconnections msgs
+      .match(FetchRoutesAndSchedule.class, // handle FetchRoutesAndSchedule msgs
         fetchRoutesAndSchedule -> {
           log.debug("status= routes_and_schedule_starting, desc= {}", fetchRoutesAndSchedule.getLookUpName());
           pipe(fetchRoutesAndSchedule(fetchRoutesAndSchedule), ec).to(getSelf());
@@ -78,7 +77,11 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
       msg.getGetInterconnections().getDeparture(), msg.getGetInterconnections().getArrival(),
       msg.getGetInterconnections().getDepartureDateTime(), msg.getGetInterconnections().getArrivalDateTime());
 
-    return fetchRoutes()
+    Config config = ConfigFactory.load();
+    String routesUrlTemplate = config.getString("application.routes-url");
+    String schedulesUrlTemplate = config.getString("application.schedules-url");
+
+    return fetchRoutes(routesUrlTemplate)
       .thenApplyAsync(routes -> routes.stream()
           .filter(route -> {
             String departure = msg.getGetInterconnections().getDeparture();
@@ -88,7 +91,8 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
           .collect(Collectors.toList())
       )
       .thenComposeAsync(routes -> {
-        List<CompletableFuture<Map<String, MonthSchedule>>> schedulesFutures = createFetchSchedulesFutures(msg, routes);
+        List<CompletableFuture<Map<String, MonthSchedule>>> schedulesFutures = createFetchSchedulesFutures(msg,
+          schedulesUrlTemplate, routes);
         log.debug("status= schedules_fetching, schedulesFuturesCount= {}", schedulesFutures.size());
 
         // execute the schedule futures in parallel
@@ -122,9 +126,9 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
    * Fetches all the Routes from the Routes API.
    * @return the collection of available routes.
    */
-  private CompletableFuture<List<Route>> fetchRoutes() {
-    log.debug("status= routes_fetching, url= {}", ROUTES_URL);
-    return http.singleRequest(HttpRequest.create(ROUTES_URL), materializer)
+  private CompletableFuture<List<Route>> fetchRoutes(String routesUrl) {
+    log.debug("status= routes_fetching, url= {}", routesUrl);
+    return http.singleRequest(HttpRequest.create(routesUrl), materializer)
       .thenComposeAsync(success -> Jackson.unmarshaller(Route[].class).unmarshal(success.entity(), ec, materializer))
       .exceptionally(throwable -> new Route[0])
       .thenApplyAsync(Arrays::asList)
@@ -144,6 +148,7 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
    * @return a collection of month schedules futures to be fetched
    */
   private List<CompletableFuture<Map<String, MonthSchedule>>> createFetchSchedulesFutures(FetchRoutesAndSchedule msg,
+                                                                                          String schedulesUrlTemplate,
                                                                                           List<Route> routes) {
     // futures to get all the schedule data from departure to arrival (possibly spans to a month range)
     final int months = getMonthsDifference(msg.getGetInterconnections());
@@ -162,7 +167,7 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
       for (int j = 0; j < months; j++) {
         boolean isFirstMonth = j == 0;
         LocalDateTime departureDateTimePlus = departureDateTime.plus(j, ChronoUnit.MONTHS);
-        schedulesFutures.add(fetchScheduleForYearMonth(departure, arrival, departureDateTimePlus, arrivalDateTime,
+        schedulesFutures.add(fetchScheduleForYearMonth(schedulesUrlTemplate, departure, arrival, departureDateTimePlus, arrivalDateTime,
           isFirstMonth));
       }
     }
@@ -180,11 +185,12 @@ public class RoutesAndSchedulesFetcherActor extends AbstractActor {
    * @param isFirstMonth true if first month in the schedule sequence, false otherwise
    * @return a future taht holds the month schedule for the provided data, index in a map by departure and arrival.
    */
-  private CompletableFuture<Map<String, MonthSchedule>> fetchScheduleForYearMonth(String departure, String arrival,
+  private CompletableFuture<Map<String, MonthSchedule>> fetchScheduleForYearMonth(String schedulesUrlTemplate,
+                                                                                  String departure, String arrival,
                                                                                   LocalDateTime departureDateTime,
                                                                                   LocalDateTime arrivalDateTime,
                                                                                   boolean isFirstMonth) {
-    final String scheduleUrl = String.format(SCHEDULE_URL, departure, arrival, departureDateTime.getYear(),
+    final String scheduleUrl = String.format(schedulesUrlTemplate, departure, arrival, departureDateTime.getYear(),
       departureDateTime.getMonthValue());
     log.debug("status= schedule_fetching, url= {}", scheduleUrl);
 
