@@ -1,0 +1,1 @@
+curl -H "Content-Type: application/json" -X GET "http://127.0.0.1:8080/interconnections?departure=DUB&arrival=WRO&departureDateTime=2018-04-01T00:00&arrivalDateTime=2018-04-30T23:59"
