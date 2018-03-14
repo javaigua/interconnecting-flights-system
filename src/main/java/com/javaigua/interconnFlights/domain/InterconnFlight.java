@@ -1,10 +1,12 @@
 package com.javaigua.interconnFlights.domain;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /**
  * A representation of the information of a InterconnFlight.
  */
+@JsonPropertyOrder({ "number", "departureAirport", "arrivalAirport", "departureDateTime", "arrivalDateTime" })
 public class InterconnFlight {
   private final String number;
   private final String departureAirport;
